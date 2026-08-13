@@ -1,5 +1,4 @@
 pipeline {
-
     agent {
         docker {
             image 'node:20-alpine'
@@ -16,24 +15,14 @@ pipeline {
         stage('Install Tools') {
             steps {
                 sh '''
-                    echo "Installing required tools..."
-
-                    apk add --no-cache \
-                        git \
-                        docker-cli \
-                        bash \
-                        curl
-
-                    echo "Git version:"
+                    apk add --no-cache git docker-cli bash curl
+                    echo "Git:"
                     git --version
-
-                    echo "Node version:"
+                    echo "Node:"
                     node --version
-
-                    echo "NPM version:"
+                    echo "NPM:"
                     npm --version
-
-                    echo "Docker version:"
+                    echo "Docker:"
                     docker --version
                 '''
             }
@@ -44,17 +33,14 @@ pipeline {
                 checkout scm
 
                 sh '''
-                    echo "======================================"
-                    echo "Checkout completed successfully"
-                    echo "======================================"
-
+                    echo "Checkout completed"
                     echo "Current directory:"
                     pwd
 
-                    echo "Project files:"
+                    echo "Files:"
                     ls -la
 
-                    echo "node-app directory:"
+                    echo "node-app:"
                     ls -la node-app
                 '''
             }
@@ -65,16 +51,10 @@ pipeline {
                 sh '''
                     cd node-app
 
-                    echo "======================================"
-                    echo "Installing Node.js dependencies"
-                    echo "======================================"
-
+                    echo "Installing dependencies..."
                     npm ci
 
-                    echo "======================================"
-                    echo "Running tests"
-                    echo "======================================"
-
+                    echo "Running tests..."
                     npm test
                 '''
             }
@@ -83,34 +63,25 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
-
                     sh '''
                         cd node-app
 
-                        echo "======================================"
-                        echo "Installing SonarQube Scanner"
-                        echo "======================================"
+                        echo "Installing SonarQube Scanner..."
 
                         npm install --save-dev sonar-scanner
 
-                        echo "Fixing scanner permissions..."
-
                         chmod +x node_modules/sonar-scanner/bin/sonar-scanner
 
-                        echo "======================================"
-                        echo "Running SonarQube Analysis"
-                        echo "======================================"
+                        echo "Running SonarQube analysis..."
 
                         ./node_modules/sonar-scanner/bin/sonar-scanner \
-                          -Dsonar.projectKey=node-express-app \
-                          -Dsonar.projectName="Node Express App" \
-                          -Dsonar.sources=. \
-                          -Dsonar.exclusions=node_modules/**,coverage/** \
-                          -Dsonar.host.url="$SONAR_HOST_URL"
+                            -Dsonar.projectKey=node-express-app \
+                            -Dsonar.projectName="Node Express App" \
+                            -Dsonar.sources=. \
+                            -Dsonar.exclusions=node_modules/**,coverage/** \
+                            -Dsonar.host.url=$SONAR_HOST_URL
 
-                        echo "======================================"
-                        echo "SonarQube Analysis Completed"
-                        echo "======================================"
+                        echo "SonarQube analysis completed."
                     '''
                 }
             }
@@ -123,16 +94,13 @@ pipeline {
 
             steps {
                 sh '''
-                    echo "======================================"
-                    echo "Building Docker Image"
-                    echo "======================================"
+                    echo "Building Docker image..."
 
                     docker build \
-                      -t ${DOCKER_IMAGE} \
-                      node-app
+                        -t "$DOCKER_IMAGE" \
+                        node-app
 
-                    echo "Docker image created:"
-                    docker images | grep node-js-app || true
+                    docker images
                 '''
             }
         }
@@ -150,31 +118,26 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )
                 ]) {
-
                     sh '''
-                        echo "======================================"
-                        echo "Logging into Docker Hub"
-                        echo "======================================"
+                        echo "Logging into Docker Hub..."
 
                         echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USERNAME" \
+                            --username "$DOCKER_USERNAME" \
                             --password-stdin
 
-                        echo "Pushing build image..."
+                        echo "Pushing image..."
 
-                        docker push ${DOCKER_IMAGE}
+                        docker push "$DOCKER_IMAGE"
 
-                        echo "Tagging latest image..."
+                        echo "Creating latest tag..."
 
                         docker tag \
-                            ${DOCKER_IMAGE} \
-                            adhil7/node-js-app:latest
+                            "$DOCKER_IMAGE" \
+                            "adhil7/node-js-app:latest"
 
-                        echo "Pushing latest image..."
+                        echo "Pushing latest..."
 
-                        docker push adhil7/node-js-app:latest
-
-                        echo "Logging out from Docker Hub..."
+                        docker push "adhil7/node-js-app:latest"
 
                         docker logout
                     '''
@@ -183,14 +146,12 @@ pipeline {
         }
 
         stage('Update Deployment File') {
-
             environment {
-                GIT_REPO_NAME = "node-js-app-pipeline"
-                GIT_USER_NAME = "Ad-hil7"
+                GIT_REPO_NAME = 'node-js-app-pipeline'
+                GIT_USER_NAME = 'Ad-hil7'
             }
 
             steps {
-
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'github',
@@ -198,53 +159,36 @@ pipeline {
                         passwordVariable: 'GITHUB_TOKEN'
                     )
                 ]) {
-
                     sh '''
-                        echo "======================================"
-                        echo "Cloning Deployment Repository"
-                        echo "======================================"
+                        echo "Cloning deployment repository..."
 
                         rm -rf repo-temp
 
                         git clone \
-                          https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git \
-                          repo-temp
+                            "https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" \
+                            repo-temp
 
                         cd repo-temp
 
-                        echo "Repository cloned successfully"
-
                         git config user.email "adhilstar303@gmail.com"
-                        git config user.name "${GIT_USER_NAME}"
+                        git config user.name "$GIT_USER_NAME"
 
-                        echo "======================================"
-                        echo "Updating Kubernetes Deployment"
-                        echo "======================================"
+                        echo "Updating deployment image..."
 
                         sed -i \
-                          "s|image: .*|image: adhil7/node-js-app:${BUILD_NUMBER}|g" \
-                          node-app-manifests/deployment.yml
+                            "s|image: .*|image: adhil7/node-js-app:${BUILD_NUMBER}|g" \
+                            node-app-manifests/deployment.yml
 
-                        echo "Updated deployment file:"
+                        echo "Deployment file:"
                         cat node-app-manifests/deployment.yml
-
-                        echo "======================================"
-                        echo "Committing changes"
-                        echo "======================================"
 
                         git add node-app-manifests/deployment.yml
 
                         git commit \
-                          -m "Update node app image tag to ${BUILD_NUMBER} [skip ci]" \
-                          || echo "No changes to commit"
-
-                        echo "======================================"
-                        echo "Pushing changes to GitHub"
-                        echo "======================================"
+                            -m "Update node app image tag to ${BUILD_NUMBER} [skip ci]" \
+                            || echo "No changes to commit"
 
                         git push origin main
-
-                        echo "Deployment file updated successfully"
                     '''
                 }
             }
@@ -252,20 +196,18 @@ pipeline {
     }
 
     post {
-
         success {
-            echo '======================================'
             echo 'PIPELINE COMPLETED SUCCESSFULLY'
-            echo '======================================'
         }
 
         failure {
-            echo '======================================'
             echo 'PIPELINE FAILED'
-            echo 'Check the failed stage above'
-            echo '======================================'
         }
 
         always {
             sh '''
-                echo "Cleaning
+                rm -rf repo-temp || true
+            '''
+        }
+    }
+}
