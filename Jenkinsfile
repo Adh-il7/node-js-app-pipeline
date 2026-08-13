@@ -1,4 +1,5 @@
 pipeline {
+
     agent {
         docker {
             image 'node:20-alpine'
@@ -6,19 +7,11 @@ pipeline {
         }
     }
 
-    stages {
+    options {
+        skipDefaultCheckout(true)
+    }
 
-        stage('Checkout') {
-            steps {
-                sh '''
-                    echo "Starting build process..."
-                    echo "Node version:"
-                    node --version
-                    echo "NPM version:"
-                    npm --version
-                '''
-            }
-        }
+    stages {
 
         stage('Install Tools') {
             steps {
@@ -28,13 +21,41 @@ pipeline {
                     apk add --no-cache \
                         git \
                         docker-cli \
-                        bash
-
-                    echo "Docker version:"
-                    docker --version
+                        bash \
+                        curl
 
                     echo "Git version:"
                     git --version
+
+                    echo "Node version:"
+                    node --version
+
+                    echo "NPM version:"
+                    npm --version
+
+                    echo "Docker version:"
+                    docker --version
+                '''
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+
+                sh '''
+                    echo "======================================"
+                    echo "Checkout completed successfully"
+                    echo "======================================"
+
+                    echo "Current directory:"
+                    pwd
+
+                    echo "Project files:"
+                    ls -la
+
+                    echo "node-app directory:"
+                    ls -la node-app
                 '''
             }
         }
@@ -44,10 +65,16 @@ pipeline {
                 sh '''
                     cd node-app
 
-                    echo "Installing Node dependencies..."
+                    echo "======================================"
+                    echo "Installing Node.js dependencies"
+                    echo "======================================"
+
                     npm ci
 
-                    echo "Running tests..."
+                    echo "======================================"
+                    echo "Running tests"
+                    echo "======================================"
+
                     npm test
                 '''
             }
@@ -56,70 +83,114 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonarqube') {
+
                     sh '''
                         cd node-app
 
-                        echo "Installing SonarQube Scanner..."
+                        echo "======================================"
+                        echo "Installing SonarQube Scanner"
+                        echo "======================================"
 
                         npm install --save-dev sonar-scanner
 
-                        echo "Fixing SonarQube Scanner permissions..."
+                        echo "Fixing scanner permissions..."
 
                         chmod +x node_modules/sonar-scanner/bin/sonar-scanner
 
-                        echo "Running SonarQube Analysis..."
+                        echo "======================================"
+                        echo "Running SonarQube Analysis"
+                        echo "======================================"
 
                         ./node_modules/sonar-scanner/bin/sonar-scanner \
                           -Dsonar.projectKey=node-express-app \
                           -Dsonar.projectName="Node Express App" \
                           -Dsonar.sources=. \
                           -Dsonar.exclusions=node_modules/**,coverage/** \
-                          -Dsonar.host.url=$SONAR_HOST_URL
+                          -Dsonar.host.url="$SONAR_HOST_URL"
 
-                        echo "SonarQube analysis completed."
+                        echo "======================================"
+                        echo "SonarQube Analysis Completed"
+                        echo "======================================"
                     '''
                 }
             }
         }
 
-        stage('Build and Push Docker Image') {
+        stage('Build Docker Image') {
             environment {
                 DOCKER_IMAGE = "adhil7/node-js-app:${BUILD_NUMBER}"
             }
 
             steps {
-                script {
+                sh '''
+                    echo "======================================"
+                    echo "Building Docker Image"
+                    echo "======================================"
 
-                    echo "Building Docker image..."
+                    docker build \
+                      -t ${DOCKER_IMAGE} \
+                      node-app
+
+                    echo "Docker image created:"
+                    docker images | grep node-js-app || true
+                '''
+            }
+        }
+
+        stage('Push Docker Image') {
+            environment {
+                DOCKER_IMAGE = "adhil7/node-js-app:${BUILD_NUMBER}"
+            }
+
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-cred',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
 
                     sh '''
-                        docker build \
-                          -t ${DOCKER_IMAGE} \
-                          node-app
+                        echo "======================================"
+                        echo "Logging into Docker Hub"
+                        echo "======================================"
+
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            -u "$DOCKER_USERNAME" \
+                            --password-stdin
+
+                        echo "Pushing build image..."
+
+                        docker push ${DOCKER_IMAGE}
+
+                        echo "Tagging latest image..."
+
+                        docker tag \
+                            ${DOCKER_IMAGE} \
+                            adhil7/node-js-app:latest
+
+                        echo "Pushing latest image..."
+
+                        docker push adhil7/node-js-app:latest
+
+                        echo "Logging out from Docker Hub..."
+
+                        docker logout
                     '''
-
-                    echo "Pushing Docker image..."
-
-                    def dockerImage = docker.image("${DOCKER_IMAGE}")
-
-                    docker.withRegistry(
-                        'https://index.docker.io/v1/',
-                        'docker-cred'
-                    ) {
-                        dockerImage.push()
-                        dockerImage.push('latest')
-                    }
                 }
             }
         }
 
         stage('Update Deployment File') {
+
             environment {
                 GIT_REPO_NAME = "node-js-app-pipeline"
-                GIT_USER_NAME = "Adh-il7"
+                GIT_USER_NAME = "Ad-hil7"
             }
 
             steps {
+
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'github',
@@ -129,7 +200,9 @@ pipeline {
                 ]) {
 
                     sh '''
-                        echo "Cloning deployment repository..."
+                        echo "======================================"
+                        echo "Cloning Deployment Repository"
+                        echo "======================================"
 
                         rm -rf repo-temp
 
@@ -139,17 +212,25 @@ pipeline {
 
                         cd repo-temp
 
+                        echo "Repository cloned successfully"
+
                         git config user.email "adhilstar303@gmail.com"
                         git config user.name "${GIT_USER_NAME}"
 
-                        echo "Updating Kubernetes deployment image..."
+                        echo "======================================"
+                        echo "Updating Kubernetes Deployment"
+                        echo "======================================"
 
                         sed -i \
                           "s|image: .*|image: adhil7/node-js-app:${BUILD_NUMBER}|g" \
                           node-app-manifests/deployment.yml
 
-                        echo "Updated deployment:"
+                        echo "Updated deployment file:"
                         cat node-app-manifests/deployment.yml
+
+                        echo "======================================"
+                        echo "Committing changes"
+                        echo "======================================"
 
                         git add node-app-manifests/deployment.yml
 
@@ -157,10 +238,34 @@ pipeline {
                           -m "Update node app image tag to ${BUILD_NUMBER} [skip ci]" \
                           || echo "No changes to commit"
 
+                        echo "======================================"
+                        echo "Pushing changes to GitHub"
+                        echo "======================================"
+
                         git push origin main
+
+                        echo "Deployment file updated successfully"
                     '''
                 }
             }
         }
     }
-}
+
+    post {
+
+        success {
+            echo '======================================'
+            echo 'PIPELINE COMPLETED SUCCESSFULLY'
+            echo '======================================'
+        }
+
+        failure {
+            echo '======================================'
+            echo 'PIPELINE FAILED'
+            echo 'Check the failed stage above'
+            echo '======================================'
+        }
+
+        always {
+            sh '''
+                echo "Cleaning
